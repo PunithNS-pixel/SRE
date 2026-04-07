@@ -29,11 +29,15 @@ rsync -a --delete \
   "$PROJECT_ROOT/sre_bench" "$WORKDIR/"
 
 rsync -a "$PROJECT_ROOT/demo" "$WORKDIR/"
+mkdir -p "$WORKDIR/server"
 cp "$PROJECT_ROOT/hf_space/app.py" "$WORKDIR/app.py"
 cp "$PROJECT_ROOT/hf_space/requirements.txt" "$WORKDIR/requirements.txt"
 cp "$PROJECT_ROOT/hf_space/openenv.yaml" "$WORKDIR/openenv.yaml"
 cp "$PROJECT_ROOT/README.md" "$WORKDIR/README.md"
 cp "$PROJECT_ROOT/Dockerfile" "$WORKDIR/Dockerfile"
+cp "$PROJECT_ROOT/pyproject.toml" "$WORKDIR/pyproject.toml"
+cp "$PROJECT_ROOT/uv.lock" "$WORKDIR/uv.lock"
+cp "$PROJECT_ROOT/server/app.py" "$WORKDIR/server/app.py"
 
 if [[ -f "$PROJECT_ROOT/inference.py" ]]; then
   cp "$PROJECT_ROOT/inference.py" "$WORKDIR/inference.py"
