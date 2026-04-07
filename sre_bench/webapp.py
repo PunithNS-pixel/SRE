@@ -49,6 +49,68 @@ _sessions: Dict[str, SREBenchEnv] = {}
 _rl_policies: Dict[str, RLEpisodePolicy] = {"default": RLEpisodePolicy()}
 
 
+_ACTION_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action_type": {
+            "type": "string",
+            "enum": [
+                "get_topology",
+                "get_metrics",
+                "read_logs",
+                "restart_service",
+                "scale_up",
+                "rollback_deploy",
+                "page_team",
+                "mark_resolved",
+                "write_postmortem",
+            ],
+        },
+        "params": {"type": "object"},
+    },
+    "required": ["action_type"],
+    "additionalProperties": False,
+}
+
+_OBSERVATION_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "alerts": {"type": "array"},
+        "visible_metrics": {"type": "object"},
+        "visible_logs": {"type": "object"},
+        "topology": {"type": ["array", "null"]},
+        "simulated_time_min": {"type": "integer"},
+        "step": {"type": "integer"},
+        "incident_active": {"type": "boolean"},
+        "last_action_result": {"type": "string"},
+    },
+    "required": [
+        "alerts",
+        "visible_metrics",
+        "visible_logs",
+        "topology",
+        "simulated_time_min",
+        "step",
+        "incident_active",
+        "last_action_result",
+    ],
+    "additionalProperties": True,
+}
+
+_STATE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "task_id": {"type": "string"},
+        "step": {"type": "integer"},
+        "simulated_time_min": {"type": "integer"},
+        "incident_active": {"type": "boolean"},
+        "resolved": {"type": "boolean"},
+    },
+    "required": ["task_id", "step", "simulated_time_min", "incident_active", "resolved"],
+    "additionalProperties": True,
+}
+
+
 class RLTrainRequest(BaseModel):
     model_name: str = "default"
     dataset_path: str = "demo/demo_dataset.json"
@@ -72,7 +134,35 @@ class RLAutoplayRequest(BaseModel):
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "healthy"}
+
+
+@app.get("/metadata")
+def metadata() -> Dict[str, str]:
+    return {
+        "name": "SRE-Bench",
+        "description": "An OpenEnv-compatible incident response environment for evaluating AI SRE agents.",
+    }
+
+
+@app.get("/schema")
+def schema() -> Dict[str, Any]:
+    return {
+        "action": _ACTION_SCHEMA,
+        "observation": _OBSERVATION_SCHEMA,
+        "state": _STATE_SCHEMA,
+    }
+
+
+@app.post("/mcp")
+def mcp_root() -> Dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": None,
+        "result": {
+            "status": "ok",
+        },
+    }
 
 
 @app.post("/reset")
