@@ -166,7 +166,9 @@ def mcp_root() -> Dict[str, Any]:
 
 
 @app.post("/reset")
-def reset_episode(req: ResetRequest) -> Dict[str, Any]:
+def reset_episode(req: ResetRequest | None = None) -> Dict[str, Any]:
+    req = req or ResetRequest()
+
     if req.task_id not in ALL_TASK_IDS:
         raise HTTPException(status_code=400, detail=f"Unknown task_id '{req.task_id}'")
 
