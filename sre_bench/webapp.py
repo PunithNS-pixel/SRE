@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
 from uuid import uuid4
 
 import gradio as gr
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import Action, ActionType, ALL_TASK_IDS, SREBenchEnv
@@ -166,19 +167,31 @@ def mcp_root() -> Dict[str, Any]:
 
 
 @app.post("/reset")
-def reset_episode(req: ResetRequest | None = None) -> Dict[str, Any]:
-    req = req or ResetRequest()
+async def reset_episode(request: Request) -> Dict[str, Any]:
+    task_id = ALL_TASK_IDS[0]
+    seed = 42
 
-    if req.task_id not in ALL_TASK_IDS:
-        raise HTTPException(status_code=400, detail=f"Unknown task_id '{req.task_id}'")
+    raw_body = await request.body()
+    if raw_body:
+        try:
+            payload = json.loads(raw_body)
+        except Exception:
+            payload = {}
 
-    env = SREBenchEnv(task_id=req.task_id, seed=req.seed)
+        if isinstance(payload, dict):
+            task_id = payload.get("task_id", task_id)
+            seed = payload.get("seed", seed)
+
+    if task_id not in ALL_TASK_IDS:
+        raise HTTPException(status_code=400, detail=f"Unknown task_id '{task_id}'")
+
+    env = SREBenchEnv(task_id=task_id, seed=seed)
     obs = env.reset()
     episode_id = str(uuid4())
     _sessions[episode_id] = env
     return {
         "episode_id": episode_id,
-        "task_id": req.task_id,
+        "task_id": task_id,
         "observation": _to_json(obs),
     }
 
