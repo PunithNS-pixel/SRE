@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source
 COPY sre_bench/ ./sre_bench/
 COPY baseline.py .
+COPY inference.py .
 COPY openenv.yaml .
 COPY app.py .
 

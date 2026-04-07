@@ -1,3 +1,15 @@
+---
+title: SRE-Bench RL Incident Simulator
+emoji: 🚨
+colorFrom: red
+colorTo: yellow
+sdk: gradio
+sdk_version: "4.0.0"
+python_version: "3.10"
+app_file: app.py
+pinned: false
+---
+
 # SRE-Bench Manual
 
 SRE-Bench is an OpenEnv-compatible incident response environment for evaluating SRE agents. The app simulates production-style outages with logs, metrics, service topology, and postmortems.
