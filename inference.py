@@ -128,18 +128,27 @@ def predict(observation: dict[str, Any] | Any, task_id: str | None = None) -> di
     return sequence[index]
 
 
-def run_episode(task_id: str, seed: int = 42, max_steps: int = 8) -> dict[str, Any]:
+def run_episode(task_id: str, seed: int = 42, max_steps: int = 8, emit_progress: bool = False) -> dict[str, Any]:
     env = SREBenchEnv(task_id=task_id, seed=seed)
     observation = env.reset()
     trace: list[dict[str, Any]] = []
+    final_score = 0.0
 
-    for _ in range(max_steps):
+    if emit_progress:
+        print(f"[START] task={task_id}", flush=True)
+
+    for step_number in range(1, max_steps + 1):
         action_payload = predict(_to_jsonable(observation), task_id=task_id)
         action = Action(
             action_type=ActionType(action_payload["action_type"]),
             params=action_payload.get("params", {}),
         )
         observation, reward, done, info = env.step(action)
+        if emit_progress:
+            print(
+                f"[STEP] step={step_number} reward={float(reward.cumulative_reward):.4f}",
+                flush=True,
+            )
         trace.append(
             {
                 "action": action_payload,
@@ -149,12 +158,24 @@ def run_episode(task_id: str, seed: int = 42, max_steps: int = 8) -> dict[str, A
             }
         )
         if done:
+            final_score = float(info.get("episode_score", reward.episode_score or reward.cumulative_reward or 0.0))
             break
+
+    if not trace:
+        final_score = 0.0
+    elif final_score == 0.0:
+        last_reward = trace[-1]["reward"]
+        if isinstance(last_reward, dict):
+            final_score = float(last_reward.get("episode_score") or last_reward.get("cumulative_reward") or 0.0)
+
+    if emit_progress:
+        print(f"[END] task={task_id} score={final_score:.4f} steps={len(trace)}", flush=True)
 
     return {
         "task_id": task_id,
         "seed": seed,
         "max_steps": max_steps,
+        "score": final_score,
         "trace": trace,
         "final_observation": _to_jsonable(observation),
     }
@@ -169,13 +190,18 @@ def main() -> int:
     args = parser.parse_args()
 
     task_ids = [args.task] if args.task else ALL_TASK_IDS
-    results = [run_episode(task_id=task_id, seed=args.seed, max_steps=args.steps) for task_id in task_ids]
+    results = [
+        run_episode(
+            task_id=task_id,
+            seed=args.seed,
+            max_steps=args.steps,
+            emit_progress=not args.json,
+        )
+        for task_id in task_ids
+    ]
 
     if args.json:
-        print(json.dumps({"results": results}, indent=2))
-    else:
-        for result in results:
-            print(f"Task {result['task_id']}: ran {len(result['trace'])} steps")
+        print(json.dumps({"results": results}, indent=2), flush=True)
     return 0
 
 
