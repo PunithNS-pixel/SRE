@@ -1,0 +1,188 @@
+name: sre-bench
+version: "1.0.0"
+description: >
+  SRE-Bench is a production incident response environment for evaluating
+  AI SRE agents. Agents investigate real-world-style microservice failures
+  using logs, metrics, and dependency graphs, then remediate and write
+  postmortems. Reward is a composite of time efficiency, blast radius,
+  root-cause accuracy, and postmortem quality.
+
+author: "SRE-Bench Contributors"
+license: MIT
+tags:
+  - sre
+  - incident-response
+  - microservices
+  - real-world
+  - production
+  - observability
+
+tasks:
+  - id: task1_oom
+    name: "The Classic OOM"
+    difficulty: easy
+    description: >
+      payments-service is crash-looping with an OutOfMemoryError.
+      Three distractor alerts are firing. Identify the root cause
+      from logs and metrics, then restart the correct service.
+    max_steps: 15
+    time_limit_minutes: 30
+    min_score_to_pass: 0.60
+
+  - id: task2_bad_deploy
+    name: "The Bad Deploy"
+    difficulty: medium
+    description: >
+      A bad deploy of auth-service is causing cascading 503 errors
+      across checkout-service, payments-service, and api-gateway.
+      Six alerts are firing. Trace the dependency graph and roll back
+      the correct service. Restarting downstream services is a trap.
+    max_steps: 25
+    time_limit_minutes: 60
+    min_score_to_pass: 0.55
+
+  - id: task3_phantom_slowdown
+    name: "The Phantom Slowdown"
+    difficulty: hard
+    description: >
+      checkout-service p99 latency spikes every ~15 simulated minutes.
+      No crashes — only intermittent slowness. Root cause: a cron job
+      on data-pipeline-service runs a heavy query that table-locks a
+      shared PostgreSQL table. Eight distractor alerts firing.
+      Correlate time-series patterns to find the cause.
+    max_steps: 40
+    time_limit_minutes: 120
+    min_score_to_pass: 0.45
+
+observation_space:
+  type: structured_json
+  description: >
+    Partial observability. Agent starts with only active alerts.
+    Additional context is revealed incrementally through actions.
+  fields:
+    alerts:
+      type: array
+      description: Currently firing alerts (severity, metric, threshold)
+    visible_metrics:
+      type: object
+      description: Metrics for services queried via get_metrics (revealed on demand)
+    visible_logs:
+      type: object
+      description: Log entries for services queried via read_logs (revealed on demand)
+    topology:
+      type: array
+      description: Service dependency graph (revealed on demand via get_topology)
+    simulated_time_min:
+      type: integer
+      description: Elapsed simulated time in minutes
+    step:
+      type: integer
+      description: Current step count
+    incident_active:
+      type: boolean
+    last_action_result:
+      type: string
+      description: Human-readable result of the previous action
+
+action_space:
+  type: parameterized_discrete
+  actions:
+    - name: get_topology
+      description: Reveal the full service dependency graph
+      params: {}
+      time_cost_minutes: 1
+
+    - name: get_metrics
+      description: Fetch point-in-time metrics for one service
+      params:
+        service: {type: string, description: Service name}
+      time_cost_minutes: 1
+
+    - name: read_logs
+      description: Fetch log entries for one service
+      params:
+        service: {type: string}
+        window_minutes: {type: integer, default: 10}
+      time_cost_minutes: 2
+
+    - name: restart_service
+      description: Restart a service. Restarting a healthy service causes blast radius.
+      params:
+        service: {type: string}
+      time_cost_minutes: 4
+
+    - name: scale_up
+      description: Increase replica count for a service
+      params:
+        service: {type: string}
+        replicas: {type: integer}
+      time_cost_minutes: 3
+
+    - name: rollback_deploy
+      description: Roll back a service to its previous deploy SHA
+      params:
+        service: {type: string}
+      time_cost_minutes: 6
+
+    - name: page_team
+      description: Page the on-call team with a message (counts as resolution in Task 3 if correct)
+      params:
+        message: {type: string}
+      time_cost_minutes: 1
+
+    - name: mark_resolved
+      description: Mark the incident as resolved with a root cause statement
+      params:
+        root_cause: {type: string}
+      time_cost_minutes: 0
+
+    - name: write_postmortem
+      description: Write an incident postmortem (root_cause, timeline, prevention)
+      params:
+        root_cause:  {type: string}
+        timeline:    {type: string}
+        prevention:  {type: string}
+      time_cost_minutes: 2
+
+reward:
+  type: continuous
+  range: [0.0, 1.0]
+  dense: true
+  signals:
+    - name: time_efficiency
+      description: Penalises wasted steps. -0.02 × time_cost per action.
+      weight: 0.15
+
+    - name: blast_radius
+      description: Penalises restarting healthy services. -0.15 per wrong service.
+      weight: 0.10
+
+    - name: resolution_bonus
+      description: +0.40 when incident correctly resolved.
+      weight: 0.40
+
+    - name: root_cause_accuracy
+      description: Grader checks stated root cause against ground truth keywords.
+      weight: 0.30
+
+    - name: postmortem_quality
+      description: 0.0–1.0 score on root_cause, timeline length, and prevention specificity.
+      weight: 0.20
+
+episode_termination:
+  conditions:
+    - incident_resolved via mark_resolved or write_postmortem
+    - max_steps exceeded (partial score awarded)
+
+services:
+  - api-gateway
+  - auth-service
+  - checkout-service
+  - payments-service
+  - inventory-service
+  - analytics-service
+  - data-pipeline-service
+  - notification-service
+
+python_entrypoint: "sre_bench:SREBenchEnv"
+interface_version: "openenv-0.1"

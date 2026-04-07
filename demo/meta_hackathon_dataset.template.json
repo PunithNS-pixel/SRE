@@ -1,0 +1,42 @@
+{
+  "dataset_name": "meta_hackathon_user_data_v1",
+  "description": "Replace steps with your user-collected trajectories from the hackathon.",
+  "scenarios": [
+    {
+      "id": "user_trace_task1",
+      "task_id": "task1_oom",
+      "seed": 42,
+      "steps": [
+        { "action_type": "get_topology", "params": {} },
+        { "action_type": "read_logs", "params": { "service": "payments-service", "window_minutes": 10 } },
+        { "action_type": "get_metrics", "params": { "service": "payments-service" } },
+        { "action_type": "restart_service", "params": { "service": "payments-service" } },
+        {
+          "action_type": "write_postmortem",
+          "params": {
+            "root_cause": "payments-service OOM due to heap exhaustion",
+            "timeline": "User investigation timeline here",
+            "prevention": "User prevention plan here"
+          }
+        }
+      ]
+    },
+    {
+      "id": "user_trace_task2",
+      "task_id": "task2_bad_deploy",
+      "seed": 42,
+      "steps": [
+        { "action_type": "get_topology", "params": {} },
+        { "action_type": "read_logs", "params": { "service": "auth-service", "window_minutes": 10 } },
+        { "action_type": "get_metrics", "params": { "service": "auth-service" } },
+        { "action_type": "rollback_deploy", "params": { "service": "auth-service" } },
+        {
+          "action_type": "mark_resolved",
+          "params": {
+            "root_cause": "bad deploy in auth-service caused cascading 503s"
+          }
+        }
+      ]
+    }
+  ]
+}

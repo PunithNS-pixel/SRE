@@ -1,0 +1,76 @@
+{
+  "dataset_name": "sre_bench_demo_v1",
+  "description": "Demo scenarios for quick local verification of SRE-Bench API behavior.",
+  "scenarios": [
+    {
+      "id": "task1_happy_path",
+      "task_id": "task1_oom",
+      "seed": 42,
+      "steps": [
+        { "action_type": "get_topology", "params": {} },
+        { "action_type": "read_logs", "params": { "service": "payments-service", "window_minutes": 10 } },
+        { "action_type": "get_metrics", "params": { "service": "payments-service" } },
+        { "action_type": "restart_service", "params": { "service": "payments-service" } },
+        {
+          "action_type": "write_postmortem",
+          "params": {
+            "root_cause": "payments-service OOM due to heap exhaustion",
+            "timeline": "T+0 alerts fired; T+2 logs showed OOM; T+3 metrics showed memory saturation; T+7 restart completed",
+            "prevention": "Increase heap, add pre-OOM alerting, and add load-test memory profiling"
+          }
+        }
+      ]
+    },
+    {
+      "id": "task2_happy_path",
+      "task_id": "task2_bad_deploy",
+      "seed": 42,
+      "steps": [
+        { "action_type": "get_topology", "params": {} },
+        { "action_type": "read_logs", "params": { "service": "auth-service", "window_minutes": 10 } },
+        { "action_type": "get_metrics", "params": { "service": "auth-service" } },
+        { "action_type": "rollback_deploy", "params": { "service": "auth-service" } },
+        {
+          "action_type": "mark_resolved",
+          "params": {
+            "root_cause": "bad deploy in auth-service caused cascading 503s"
+          }
+        }
+      ]
+    },
+    {
+      "id": "task3_happy_path",
+      "task_id": "task3_phantom_slowdown",
+      "seed": 42,
+      "steps": [
+        { "action_type": "get_topology", "params": {} },
+        { "action_type": "get_metrics", "params": { "service": "checkout-service" } },
+        { "action_type": "read_logs", "params": { "service": "data-pipeline-service", "window_minutes": 10 } },
+        { "action_type": "scale_up", "params": { "service": "data-pipeline-service", "replicas": 6 } },
+        {
+          "action_type": "write_postmortem",
+          "params": {
+            "root_cause": "periodic cron in data-pipeline-service caused table lock and checkout p99 spikes",
+            "timeline": "Detected periodic latency spikes; correlated with pipeline cron windows; mitigated by scaling data-pipeline service",
+            "prevention": "Stagger cron schedule, optimize query, add lock-duration alerts"
+          }
+        }
+      ]
+    },
+    {
+      "id": "task1_negative_wrong_service_restart",
+      "task_id": "task1_oom",
+      "seed": 42,
+      "steps": [
+        { "action_type": "get_topology", "params": {} },
+        { "action_type": "restart_service", "params": { "service": "analytics-service" } },
+        {
+          "action_type": "mark_resolved",
+          "params": {
+            "root_cause": "resolved after restarting analytics-service"
+          }
+        }
+      ]
+    }
+  ]
+}

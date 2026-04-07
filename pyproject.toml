@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sre-bench"
+version = "1.0.0"
+description = "SRE incident response benchmark environment for OpenEnv"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "SRE-Bench Contributors" }]
+dependencies = [
+  "pydantic>=2.0,<3.0",
+  "pyyaml>=6.0",
+  "gradio>=4.0",
+  "openenv-core>=0.2.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools]
+packages = ["sre_bench"]
