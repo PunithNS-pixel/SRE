@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Hackathon inference entrypoint for SRE-Bench.
-
-This module provides a lightweight, deterministic agent that can be imported
-by an evaluation harness or executed directly from the repository root.
-"""
+"""Hackathon inference entrypoint for SRE-Bench."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import sys
+import traceback
 from typing import Any
 
 from openai import OpenAI
@@ -179,12 +177,6 @@ def predict(
     task_id: str | None = None,
     llm_client: OpenAI | None = None,
 ) -> dict[str, Any]:
-    """Return the next action as a JSON-serializable payload.
-
-    The function is intentionally deterministic so it can be used in simple
-    evaluation harnesses without external model access.
-    """
-
     if not isinstance(observation, dict):
         observation = _to_jsonable(observation)
 
@@ -195,7 +187,6 @@ def predict(
             if llm_action is not None:
                 return llm_action
         except Exception:
-            # Fallback to deterministic sequence if LLM call or parsing fails.
             pass
 
     step = int(observation.get("step", 0))
@@ -211,47 +202,71 @@ def run_episode(
     emit_progress: bool = True,
     llm_client: OpenAI | None = None,
 ) -> dict[str, Any]:
-    env = SREBenchEnv(task_id=task_id, seed=seed)
-    observation = env.reset()
-    trace: list[dict[str, Any]] = []
+    # Always print [START] first so the harness sees output even if we crash mid-episode
+    print(f"[START] task={task_id}", flush=True)
+
     final_score = 0.0
+    trace: list[dict[str, Any]] = []
 
-    if emit_progress:
-        print(f"[START] task={task_id}", flush=True)
+    try:
+        env = SREBenchEnv(task_id=task_id, seed=seed)
+        observation = env.reset()
 
-    for step_number in range(1, max_steps + 1):
-        action_payload = predict(_to_jsonable(observation), task_id=task_id, llm_client=llm_client)
-        action = Action(
-            action_type=ActionType(action_payload["action_type"]),
-            params=action_payload.get("params", {}),
-        )
-        observation, reward, done, info = env.step(action)
-        if emit_progress:
-            print(
-                f"[STEP] step={step_number} reward={float(reward.cumulative_reward):.4f}",
-                flush=True,
+        for step_number in range(1, max_steps + 1):
+            try:
+                action_payload = predict(_to_jsonable(observation), task_id=task_id, llm_client=llm_client)
+                action = Action(
+                    action_type=ActionType(action_payload["action_type"]),
+                    params=action_payload.get("params", {}),
+                )
+                observation, reward, done, info = env.step(action)
+            except Exception as exc:
+                print(f"[warn] step {step_number} error: {exc}", file=sys.stderr, flush=True)
+                # Emit a zero-reward step so the harness sees progress
+                print(f"[STEP] step={step_number} reward=0.0000", flush=True)
+                break
+
+            cumulative = float(
+                getattr(reward, "cumulative_reward", None)
+                or (reward.get("cumulative_reward", 0.0) if isinstance(reward, dict) else 0.0)
             )
-        trace.append(
-            {
-                "action": action_payload,
-                "reward": _to_jsonable(reward),
-                "done": done,
-                "info": _to_jsonable(info),
-            }
-        )
-        if done:
-            final_score = float(info.get("episode_score", reward.episode_score or reward.cumulative_reward or 0.0))
-            break
+            print(f"[STEP] step={step_number} reward={cumulative:.4f}", flush=True)
 
-    if not trace:
+            trace.append(
+                {
+                    "action": action_payload,
+                    "reward": _to_jsonable(reward),
+                    "done": done,
+                    "info": _to_jsonable(info),
+                }
+            )
+
+            if done:
+                final_score = float(
+                    info.get("episode_score")
+                    or getattr(reward, "episode_score", None)
+                    or getattr(reward, "cumulative_reward", None)
+                    or 0.0
+                )
+                break
+
+        if not trace:
+            final_score = 0.0
+        elif final_score == 0.0:
+            last_reward = trace[-1]["reward"]
+            if isinstance(last_reward, dict):
+                final_score = float(
+                    last_reward.get("episode_score") or last_reward.get("cumulative_reward") or 0.0
+                )
+
+    except Exception as exc:
+        print(f"[warn] run_episode crashed for {task_id}: {exc}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         final_score = 0.0
-    elif final_score == 0.0:
-        last_reward = trace[-1]["reward"]
-        if isinstance(last_reward, dict):
-            final_score = float(last_reward.get("episode_score") or last_reward.get("cumulative_reward") or 0.0)
 
-    if emit_progress:
-        print(f"[END] task={task_id} score={final_score:.4f} steps={len(trace)}", flush=True)
+    # Always print [END] so the harness can parse a result
+    print(f"[END] task={task_id} score={final_score:.4f} steps={len(trace)}", flush=True)
+    sys.stdout.flush()
 
     return {
         "task_id": task_id,
@@ -259,7 +274,6 @@ def run_episode(
         "max_steps": max_steps,
         "score": final_score,
         "trace": trace,
-        "final_observation": _to_jsonable(observation),
     }
 
 
@@ -271,23 +285,28 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON only")
     args = parser.parse_args()
 
-    llm_client = _build_openai_client()
+    try:
+        llm_client = _build_openai_client()
+    except Exception as exc:
+        print(f"[warn] could not build LLM client: {exc}", file=sys.stderr, flush=True)
+        llm_client = None
 
     task_ids = [args.task] if args.task else ALL_TASK_IDS
-    results = [
-        run_episode(
+    results = []
+    for task_id in task_ids:
+        result = run_episode(
             task_id=task_id,
             seed=args.seed,
             max_steps=args.steps,
-            # Evaluators parse stdout for structured blocks, so always emit them.
             emit_progress=True,
             llm_client=llm_client,
         )
-        for task_id in task_ids
-    ]
+        results.append(result)
 
     if args.json:
         print(json.dumps({"results": results}, indent=2), flush=True)
+
+    sys.stdout.flush()
     return 0
 
 
