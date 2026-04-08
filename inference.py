@@ -208,7 +208,7 @@ def run_episode(
     task_id: str,
     seed: int = 42,
     max_steps: int = 8,
-    emit_progress: bool = False,
+    emit_progress: bool = True,
     llm_client: OpenAI | None = None,
 ) -> dict[str, Any]:
     env = SREBenchEnv(task_id=task_id, seed=seed)
