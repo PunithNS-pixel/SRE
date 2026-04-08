@@ -195,7 +195,8 @@ def main() -> int:
             task_id=task_id,
             seed=args.seed,
             max_steps=args.steps,
-            emit_progress=not args.json,
+            # Evaluators parse stdout for structured blocks, so always emit them.
+            emit_progress=True,
         )
         for task_id in task_ids
     ]
