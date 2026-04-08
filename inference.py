@@ -9,9 +9,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from typing import Any
 
+from openai import OpenAI
+
 from sre_bench import ALL_TASK_IDS, Action, ActionType, SREBenchEnv
+
+
+API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
+MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
+
+def _can_use_llm() -> bool:
+    if not HF_TOKEN:
+        return False
+    if API_BASE_URL == "<your-active-endpoint>" or MODEL_NAME == "<your-active-model>":
+        return False
+    return True
+
+
+def _build_openai_client() -> OpenAI | None:
+    if not _can_use_llm():
+        return None
+    return OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -111,7 +134,51 @@ def _task_sequence(task_id: str) -> list[dict[str, Any]]:
     return [{"action_type": "get_topology", "params": {}}]
 
 
-def predict(observation: dict[str, Any] | Any, task_id: str | None = None) -> dict[str, Any]:
+def _predict_with_llm(
+    client: OpenAI,
+    observation: dict[str, Any],
+    task_id: str,
+) -> dict[str, Any] | None:
+    prompt = {
+        "task_id": task_id,
+        "observation": observation,
+        "allowed_actions": [action_type.value for action_type in ActionType],
+        "required_output": {"action_type": "string", "params": "object"},
+    }
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        temperature=0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an SRE incident responder. Choose one next action only. "
+                    "Return strict JSON with keys action_type and params."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(prompt),
+            },
+        ],
+        response_format={"type": "json_object"},
+    )
+    content = (response.choices[0].message.content or "").strip()
+    parsed = json.loads(content)
+    action_type = parsed.get("action_type")
+    params = parsed.get("params", {})
+    if action_type not in [item.value for item in ActionType]:
+        return None
+    if not isinstance(params, dict):
+        params = {}
+    return {"action_type": action_type, "params": params}
+
+
+def predict(
+    observation: dict[str, Any] | Any,
+    task_id: str | None = None,
+    llm_client: OpenAI | None = None,
+) -> dict[str, Any]:
     """Return the next action as a JSON-serializable payload.
 
     The function is intentionally deterministic so it can be used in simple
@@ -122,13 +189,28 @@ def predict(observation: dict[str, Any] | Any, task_id: str | None = None) -> di
         observation = _to_jsonable(observation)
 
     resolved_task_id = task_id or _infer_task_id(observation)
+    if llm_client is not None:
+        try:
+            llm_action = _predict_with_llm(llm_client, observation, resolved_task_id)
+            if llm_action is not None:
+                return llm_action
+        except Exception:
+            # Fallback to deterministic sequence if LLM call or parsing fails.
+            pass
+
     step = int(observation.get("step", 0))
     sequence = _task_sequence(resolved_task_id)
     index = min(step, len(sequence) - 1)
     return sequence[index]
 
 
-def run_episode(task_id: str, seed: int = 42, max_steps: int = 8, emit_progress: bool = False) -> dict[str, Any]:
+def run_episode(
+    task_id: str,
+    seed: int = 42,
+    max_steps: int = 8,
+    emit_progress: bool = False,
+    llm_client: OpenAI | None = None,
+) -> dict[str, Any]:
     env = SREBenchEnv(task_id=task_id, seed=seed)
     observation = env.reset()
     trace: list[dict[str, Any]] = []
@@ -138,7 +220,7 @@ def run_episode(task_id: str, seed: int = 42, max_steps: int = 8, emit_progress:
         print(f"[START] task={task_id}", flush=True)
 
     for step_number in range(1, max_steps + 1):
-        action_payload = predict(_to_jsonable(observation), task_id=task_id)
+        action_payload = predict(_to_jsonable(observation), task_id=task_id, llm_client=llm_client)
         action = Action(
             action_type=ActionType(action_payload["action_type"]),
             params=action_payload.get("params", {}),
@@ -189,6 +271,8 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON only")
     args = parser.parse_args()
 
+    llm_client = _build_openai_client()
+
     task_ids = [args.task] if args.task else ALL_TASK_IDS
     results = [
         run_episode(
@@ -197,6 +281,7 @@ def main() -> int:
             max_steps=args.steps,
             # Evaluators parse stdout for structured blocks, so always emit them.
             emit_progress=True,
+            llm_client=llm_client,
         )
         for task_id in task_ids
     ]
