@@ -167,6 +167,36 @@ obs, reward, done, info = env.step(Action(
 ))
 ```
 
+## LLM-Backed Inference
+
+`inference.py` will use a deterministic fallback unless all three values below are set:
+
+```bash
+export API_BASE_URL="https://your-openai-compatible-endpoint/v1"
+export MODEL_NAME="your-model-name"
+export HF_TOKEN="your-token-or-api-key"
+```
+
+Common setups:
+
+1. Local OpenAI-compatible server or vLLM
+  - `API_BASE_URL` is usually `http://127.0.0.1:8000/v1`
+  - `MODEL_NAME` is the exact served model name from startup logs or `/v1/models`
+  - `HF_TOKEN` can be any value your server accepts, or a real token if required
+
+2. Hosted inference endpoint
+  - `API_BASE_URL` is the provider’s OpenAI-compatible base URL, usually ending in `/v1`
+  - `MODEL_NAME` is the deployment/model identifier shown in the provider console
+  - `HF_TOKEN` is your API key or access token
+
+Quick verification:
+
+```bash
+curl -s "$API_BASE_URL/models" -H "Authorization: Bearer $HF_TOKEN"
+```
+
+If the request returns a model list, `API_BASE_URL` and `HF_TOKEN` are likely correct. If the model name appears in that response, use it verbatim for `MODEL_NAME`.
+
 ## Validate The Package
 
 Run the OpenEnv validator:

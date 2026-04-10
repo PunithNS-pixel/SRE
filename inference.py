@@ -8,11 +8,24 @@ import json
 import os
 import sys
 import traceback
+from types import SimpleNamespace
 from typing import Any
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None  # type: ignore[assignment]
 
-from sre_bench import ALL_TASK_IDS, Action, ActionType, SREBenchEnv
+try:
+    from sre_bench import ALL_TASK_IDS, Action, ActionType, SREBenchEnv
+except Exception as exc:
+    ALL_TASK_IDS = ["task1_oom", "task2_bad_deploy", "task3_phantom_slowdown"]
+    Action = None  # type: ignore[assignment]
+    ActionType = None  # type: ignore[assignment]
+    SREBenchEnv = None  # type: ignore[assignment]
+    _IMPORT_ERROR = exc
+else:
+    _IMPORT_ERROR = None
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
@@ -22,6 +35,8 @@ LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 
 def _can_use_llm() -> bool:
+    if OpenAI is None:
+        return False
     if not HF_TOKEN:
         return False
     if API_BASE_URL == "<your-active-endpoint>" or MODEL_NAME == "<your-active-model>":
@@ -29,10 +44,18 @@ def _can_use_llm() -> bool:
     return True
 
 
-def _build_openai_client() -> OpenAI | None:
+def _build_openai_client() -> Any | None:
     if not _can_use_llm():
         return None
     return OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+
+
+def _emit(line: str) -> None:
+    print(line, flush=True)
+
+
+def _empty_reward() -> SimpleNamespace:
+    return SimpleNamespace(cumulative_reward=0.0, episode_score=0.0)
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -133,10 +156,12 @@ def _task_sequence(task_id: str) -> list[dict[str, Any]]:
 
 
 def _predict_with_llm(
-    client: OpenAI,
+    client: Any,
     observation: dict[str, Any],
     task_id: str,
 ) -> dict[str, Any] | None:
+    if ActionType is None:
+        return None
     prompt = {
         "task_id": task_id,
         "observation": observation,
@@ -175,7 +200,7 @@ def _predict_with_llm(
 def predict(
     observation: dict[str, Any] | Any,
     task_id: str | None = None,
-    llm_client: OpenAI | None = None,
+    llm_client: Any | None = None,
 ) -> dict[str, Any]:
     if not isinstance(observation, dict):
         observation = _to_jsonable(observation)
@@ -200,19 +225,40 @@ def run_episode(
     seed: int = 42,
     max_steps: int = 8,
     emit_progress: bool = True,
-    llm_client: OpenAI | None = None,
+    llm_client: Any | None = None,
 ) -> dict[str, Any]:
-    # Always print [START] first so the harness sees output even if we crash mid-episode
-    print(f"[START] task={task_id}", flush=True)
+    _emit(f"[START] task={task_id}")
 
     final_score = 0.0
     trace: list[dict[str, Any]] = []
 
     try:
+        if _IMPORT_ERROR is not None or SREBenchEnv is None or Action is None or ActionType is None:
+            if _IMPORT_ERROR is not None:
+                print(f"[warn] runtime unavailable: {_IMPORT_ERROR}", file=sys.stderr, flush=True)
+            trace.append(
+                {
+                    "action": None,
+                    "reward": _to_jsonable(_empty_reward()),
+                    "done": True,
+                    "info": {"error": "runtime unavailable"},
+                }
+            )
+            _emit("[STEP] step=1 reward=0.0000")
+            final_score = 0.0
+            return {
+                "task_id": task_id,
+                "seed": seed,
+                "max_steps": max_steps,
+                "score": final_score,
+                "trace": trace,
+            }
+
         env = SREBenchEnv(task_id=task_id, seed=seed)
         observation = env.reset()
 
         for step_number in range(1, max_steps + 1):
+            action_payload: dict[str, Any] | None = None
             try:
                 action_payload = predict(_to_jsonable(observation), task_id=task_id, llm_client=llm_client)
                 action = Action(
@@ -222,15 +268,22 @@ def run_episode(
                 observation, reward, done, info = env.step(action)
             except Exception as exc:
                 print(f"[warn] step {step_number} error: {exc}", file=sys.stderr, flush=True)
-                # Emit a zero-reward step so the harness sees progress
-                print(f"[STEP] step={step_number} reward=0.0000", flush=True)
+                trace.append(
+                    {
+                        "action": action_payload,
+                        "reward": _to_jsonable(_empty_reward()),
+                        "done": False,
+                        "info": {"error": str(exc)},
+                    }
+                )
+                _emit(f"[STEP] step={step_number} reward=0.0000")
                 break
 
             cumulative = float(
                 getattr(reward, "cumulative_reward", None)
                 or (reward.get("cumulative_reward", 0.0) if isinstance(reward, dict) else 0.0)
             )
-            print(f"[STEP] step={step_number} reward={cumulative:.4f}", flush=True)
+            _emit(f"[STEP] step={step_number} reward={cumulative:.4f}")
 
             trace.append(
                 {
@@ -265,7 +318,7 @@ def run_episode(
         final_score = 0.0
 
     # Always print [END] so the harness can parse a result
-    print(f"[END] task={task_id} score={final_score:.4f} steps={len(trace)}", flush=True)
+    _emit(f"[END] task={task_id} score={final_score:.4f} steps={len(trace)}")
     sys.stdout.flush()
 
     return {
