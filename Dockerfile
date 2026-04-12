@@ -5,6 +5,9 @@ LABEL description="SRE-Bench: Production Incident Response OpenEnv"
 
 WORKDIR /app
 
+# Run API-only mode in validator/container environments for faster, safer startup.
+ENV SRE_BENCH_DISABLE_UI=1
+
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

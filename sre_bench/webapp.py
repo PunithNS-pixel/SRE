@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict, List
 from uuid import uuid4
 
@@ -291,5 +292,6 @@ def rl_autoplay(req: RLAutoplayRequest) -> Dict[str, Any]:
     return result
 
 
-ui = build_ui()
-app = gr.mount_gradio_app(app, ui, path="/")
+if os.getenv("SRE_BENCH_DISABLE_UI", "0") != "1":
+    ui = build_ui()
+    app = gr.mount_gradio_app(app, ui, path="/")
