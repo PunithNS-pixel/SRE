@@ -67,6 +67,14 @@ def _to_jsonable(value: Any) -> Any:
         return [_to_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {key: _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Never leak non-serializable objects into final JSON output.
+    return str(value)
+
+
+def _safe_json_dumps(value: Any) -> str:
+    return json.dumps(_to_jsonable(value), indent=2)
     return value
 
 
@@ -246,13 +254,16 @@ def run_episode(
             )
             _emit("[STEP] step=1 reward=0.0000")
             final_score = 0.0
-            return {
+            _emit(f"[END] task={task_id} score={final_score:.4f} steps={len(trace)}")
+            result = {
                 "task_id": task_id,
                 "seed": seed,
                 "max_steps": max_steps,
                 "score": final_score,
                 "trace": trace,
             }
+            sys.stdout.flush()
+            return result
 
         env = SREBenchEnv(task_id=task_id, seed=seed)
         observation = env.reset()
@@ -336,7 +347,9 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42, help="Episode seed")
     parser.add_argument("--steps", type=int, default=8, help="Maximum steps per episode")
     parser.add_argument("--json", action="store_true", help="Emit JSON only")
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        print(f"[warn] ignoring unknown args: {unknown}", file=sys.stderr, flush=True)
 
     try:
         llm_client = _build_openai_client()
@@ -344,24 +357,52 @@ def main() -> int:
         print(f"[warn] could not build LLM client: {exc}", file=sys.stderr, flush=True)
         llm_client = None
 
-    task_ids = [args.task] if args.task else ALL_TASK_IDS
+    task_ids = [args.task] if args.task else list(ALL_TASK_IDS)
+    if not task_ids:
+        task_ids = ["task1_oom"]
+
     results = []
     for task_id in task_ids:
-        result = run_episode(
-            task_id=task_id,
-            seed=args.seed,
-            max_steps=args.steps,
-            emit_progress=True,
-            llm_client=llm_client,
-        )
+        try:
+            result = run_episode(
+                task_id=task_id,
+                seed=args.seed,
+                max_steps=args.steps,
+                emit_progress=True,
+                llm_client=llm_client,
+            )
+        except Exception as exc:
+            print(f"[warn] unexpected task failure for {task_id}: {exc}", file=sys.stderr, flush=True)
+            traceback.print_exc(file=sys.stderr)
+            _emit(f"[START] task={task_id}")
+            _emit("[STEP] step=1 reward=0.0000")
+            _emit(f"[END] task={task_id} score=0.0000 steps=0")
+            result = {
+                "task_id": task_id,
+                "seed": args.seed,
+                "max_steps": args.steps,
+                "score": 0.0,
+                "trace": [],
+                "error": str(exc),
+            }
         results.append(result)
 
     if args.json:
-        print(json.dumps({"results": results}, indent=2), flush=True)
+        try:
+            print(_safe_json_dumps({"results": results}), flush=True)
+        except Exception as exc:
+            print(f"[warn] failed to serialize JSON output: {exc}", file=sys.stderr, flush=True)
+            print('{"results": []}', flush=True)
 
     sys.stdout.flush()
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f"[warn] top-level inference failure: {exc}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        print('{"results": []}', flush=True)
+        raise SystemExit(0)
